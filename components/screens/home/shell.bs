@@ -36,7 +36,8 @@ import "pkg:/source/watchparty/page.bs"
 ' The shell loads the library tabs, the server's name, and the profile's
 ' title art preference (m.global.titleArt, which heroes and the detail page
 ' read), whether the server offers Watchlist and Favorites
-' (components/views/personal.bs), moves focus between bar and content
+' (components/views/personal.bs), and the account's profile list (for the
+' avatar menu's profile row), moves focus between bar and content
 ' (dimming the bar while the content has it), opens the avatar menu, its
 ' sign-out confirmation, the library tabs' lists, and the For You menu,
 ' and answers
@@ -71,6 +72,9 @@ sub shellInit()
     m.shellHidden = invalid
     m.shellTitleArtRevision = 0
     m.shellRequestsKey = ""
+    ' An open avatar menu follows the session (onShellSession).
+    if not m.global.hasField("sessionRevision") then m.global.addFields({ sessionRevision: 0 })
+    m.global.observeField("sessionRevision", "onShellSession")
 end sub
 
 ' The selected tab, the avatar, and the library tabs.
@@ -109,6 +113,22 @@ sub shellStart()
     ' change.
     m.shellRequestsKey = requestsUi.currentKey()
     shellSend(mediaRequests.request.status(), "onShellRequests")
+    ' The account's profile list, read again each time a page with the bar
+    ' starts: the session keeps it and the account's profile limit, which
+    ' the avatar menu's profile row follows as it opens
+    ' (mainShell.profileRow), so a profile added or removed elsewhere shows
+    ' without the picker; a menu already open follows the answer too
+    ' (onShellSession).
+    api.session.profiles(api.newHandle(m.top.owner))
+end sub
+
+' The session changed (AppScene's screen host counts each one in
+' m.global.sessionRevision). The page's profile-list read can answer after
+' the avatar menu opened, as a preview or entered: the menu is built again,
+' keeping the highlighted row, so its profile row follows the list and limit
+' the session now has.
+sub onShellSession()
+    if m.menu <> invalid and m.menuItem = mainShell.barItem.AVATAR then m.menu.menu = shellAvatarMenuModel()
 end sub
 
 ' A changed answer adds Requests to an open avatar menu, or takes it away,
@@ -456,8 +476,9 @@ sub shellPreviewAvatarMenu()
     m.menu.observeField("chosen", "onShellMenuChosen")
 end sub
 
-' The avatar menu's header and rows (mainShell.menuGroups), Requests while
-' the server offers it, and Watch Party
+' The avatar menu's header and rows (mainShell.menuGroups): the profile row
+' the open account's profile list calls for (mainShell.profileRow), read as
+' the menu opens, Requests while the server offers it, and Watch Party
 ' while the room Task says the server offers it, as "Return to Watch
 ' Party" in a party (docs/watch-party.md section 4.1).
 function shellAvatarMenuModel() as Object
@@ -470,7 +491,8 @@ function shellAvatarMenuModel() as Object
     if partyEngaged(party) then partyLabel = i18n.text(watchparty.lobby.menuTitleKey(party.room))
     groups = []
     requests = requestsUi.available(requestsUi.currentKey())
-    for each group in mainShell.menuGroups(debugBuild, watchparty.page.available(party.support) or partyEngaged(party), requests)
+    profileItem = mainShell.profileRow(api.session.current())
+    for each group in mainShell.menuGroups(debugBuild, watchparty.page.available(party.support) or partyEngaged(party), requests, profileItem)
         items = []
         for each key in group
             label = i18n.text("menu." + key)
@@ -502,7 +524,7 @@ end sub
 ' The menu closes first, so the page is covered from its avatar. Sign Out
 ' asks first (tvOS's confirmation).
 sub onShellMenuChosen()
-    action = mainShell.menuAction(m.menu.chosen)
+    action = mainShell.menuAction(m.menu.chosen, api.session.current())
     shellCloseMenu(true)
     if action = invalid then return
     if action.kind = "signOut"

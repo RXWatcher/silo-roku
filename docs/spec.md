@@ -453,13 +453,43 @@ their existing HD/FHD assets.
   - Panel: 460 px wide, top at 132, right edge at the right inset, padding 14.
   - Header: a 44 px avatar; the profile's name in 24 px SemiBold; the
     server's display name in uppercase, 14 px, letter-spaced, at 38%.
-  - Rows: Switch Profile, History, Requests (while the server offers
-    Requests, section 5.11), and Watch Party ("Return to Watch Party" in a
-    party, while the server offers one: [`watch-party.md`](watch-party.md)
-    section 4.1); then Settings, Change Account (section 7.5), and Sign Out. Watchlist and
-    Favorites are in the For You menu only. They are 54 px tall (22 px SemiBold,
-    16 px inset), 10 px apart. A focused row gets a white fill with radius
-    14; resting labels are at 86%, and Sign Out is red at 90%.
+  - Rows: History, Requests (while the server offers Requests, section
+    5.11), and Watch Party ("Return to Watch Party" in a party, while the
+    server offers one: [`watch-party.md`](watch-party.md) section 4.1); then
+    Settings, the profile row, Change Account (section 7.5) directly under
+    it, and Sign Out, the same order on tvOS and Android TV. Watchlist and
+    Favorites are in the For You menu only. They are 54 px tall (22 px
+    SemiBold, 16 px inset), 10 px apart. A focused row gets a white fill with
+    radius 14; resting labels are at 86%, and Sign Out is red at 90%. The
+    menu opens on its first row, History.
+  - The profile row follows the open account's profile list as the client
+    last read it, without a restart:
+    - Switch Profile while the list has two or more profiles, and before
+      any list is known. It opens the account's picker, which stays open.
+    - Add Profile while the list has one profile and the account may have
+      more: the profile list's `max_profiles` is above 1, or the server did
+      not send it. It opens New Profile (section 5.4) without the picker,
+      after the primary profile's PIN when it has one. Once the profile is
+      created, or may have been, the account's picker shows, as after Add
+      profile on the picker; Cancel and Back return to the page the menu
+      was on.
+    - No row while the list has one profile and `max_profiles` is 1: there
+      is nothing to switch to or add, and Change Account follows Settings.
+
+    The limit is saved with the account's profile list (section 7.5), so
+    the row is right as soon as the app starts, and after a restart an
+    account limited to one profile never offers Add Profile. Each page
+    with the bar reads the list again as it starts, as the launch's profile
+    step does without drawing the picker, so a profile added or removed
+    elsewhere, or a changed limit, shows without the picker; a menu already
+    open when the answer arrives is built again, keeping its highlighted
+    row. When several reads of the list are in flight, the answer to the
+    one sent last stands. The limit is unknown only for a server that does
+    not send it, or before any list was read.
+  - Change Account always shows; accounts and servers are added there. The
+    menu is the Roku's own account's: a phone's profile handoff
+    ([`silocontrol.md`](silocontrol.md) section 8) borrows an identity for
+    playback only and changes no row.
   - A divider separates groups only.
   - Sign Out asks for confirmation (Cancel / Sign Out), saying the server
     is removed too when it has no other account (section 7.5).
@@ -763,7 +793,10 @@ their existing HD/FHD assets.
     another refusal shows "Can't Create Profile" with the server's reason;
     no answer shows "Profile May Have Been Created" and returns to the
     picker, so the list shows whether it was; a refused primary token returns
-    to the picker to enter its PIN again.
+    to the picker to enter its PIN again. Opened from the avatar menu's Add
+    Profile (section 5.3), no picker is beneath: each of those opens the
+    account's picker in the form's place, and Cancel returns to the page
+    the menu was on.
   - tvOS's "Allow requests" switch shows only on servers that accept
     `requests_allowed`; none does on silo-server `main` (f133b241f), so
     Roku leaves it out until one does.
@@ -2935,7 +2968,9 @@ profile_verification_required`, for example after the PIN changed):
   token; it is never sent with another profile's credentials.
 
 Creating a profile takes the household's primary profile, which the
-picker has not chosen (Add profile, section 5.4). As tvOS and Android TV do,
+picker has not chosen (Add profile, section 5.4; from the avatar menu's Add
+Profile, section 5.3, it is the open profile, the account's only one, and
+is asked for its PIN again all the same). As tvOS and Android TV do,
 the client acts as it without opening it: for a PIN-locked primary, the PIN
 screen sends `verify-pin` once, and the token stays in the account session's
 memory, never in the registry. `POST /api/v2/profiles` then carries the
@@ -2979,7 +3014,8 @@ use) and `active`, the active account's `localAccountId`. `silo.accounts`
 (21 KB) holds the saved servers as one JSON list (`servers`: origin, name,
 the viewer's label, last use) and one JSON entry per account under
 `a.<localAccountId>`: server, the server's user ID, username, tokens,
-remembered profile, PIN proofs, the last profile list (for the picker),
+remembered profile, PIN proofs, the last profile list (for the picker)
+with the profile limit that list gave (for the avatar menu, section 5.3),
 when it was added and last used. `localAccountId` is a UUID made on this
 device and every local key uses it; the server's user ID only finds a saved
 account again when the same person signs in, which refreshes that account
