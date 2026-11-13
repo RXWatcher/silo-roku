@@ -18,8 +18,12 @@ namespace playback.intent
     ' { itemId, title, fileId, pinned, runtime, audioTracks,
     ' effectiveAudioIndex, versions, resumeSeconds, kind, name, seriesTitle,
     ' seasonNumber, episodeNumber, year }. The
-    ' version is pinnedFile when the projection lists it (a detail page's
-    ' Version choice, nav.player.pinnedFile), which pinned then says; else
+    ' version is startFile when the projection lists it (the file a detail
+    ' page or a phone resolved, nav.player.startFile), pinned when pins says
+    ' so (a Version choice, nav.player.pinnedFile); else, with edition
+    ' ({ key, quality }, nav.player.editionOf), the best file of that
+    ' edition for that quality (bestInEdition), so a file gone since the
+    ' page read it never moves the start to another cut; else
     ' chooseVersion's. audioTracks are { index, codec, channels, language, title,
     ' default, bitrate }, what playback.options.initialAudio ranks: title is
     ' the track's title, else its embedded title; effectiveAudioIndex is the
@@ -31,11 +35,12 @@ namespace playback.intent
     ' position to resume (resumeOf), or invalid. kind is the projection's
     ' type ("movie", "episode"), and name its own title; playback.markers
     ' reads the version's markers.
-    function fromWatch(detail as Dynamic, itemId as String, pinnedFile = "" as String) as Dynamic
+    function fromWatch(detail as Dynamic, itemId as String, startFile = "" as String, pins = false as Boolean, edition = invalid as Dynamic) as Dynamic
         if not util.isObject(detail) or not playback.values.isArray(detail.versions) then return invalid
-        version = listedVersion(detail, pinnedFile)
-        pinned = version <> invalid
-        if not pinned then version = chooseVersion(detail)
+        version = listedVersion(detail, startFile)
+        pinned = pins and version <> invalid
+        if version = invalid and util.isObject(edition) then version = bestInEdition(detail, util.text(edition.key), util.text(edition.quality))
+        if version = invalid then version = chooseVersion(detail)
         if version = invalid then return invalid
         file = fileTracks(version)
         runtime = invalid
@@ -150,9 +155,91 @@ namespace playback.intent
         return invalid
     end function
 
+    ' --- Editions and Auto (silo-roku#62) -----------------------------------
+
+    ' A resolution's rank as silo-server ranks it (internal/access/quality.go):
+    ' 480p 1, 720p 2, 1080p 3, 2160p 4, 4320p 5, anything else 0 (unknown).
+    function resolutionRank(resolution as Dynamic) as Integer
+        ranks = { "480P": 1, "720P": 2, "1080P": 3, "2160P": 4, "4320P": 5 }
+        rank = ranks[UCase(util.text(resolution).Trim())]
+        if rank = invalid then return 0
+        return rank
+    end function
+
+    ' A watch version's facts Auto compares, { rank, hdr, size }: its
+    ' resolutionRank, whether it is HDR, and its file_size (0 unknown).
+    ' catalog.selection's versions carry the same three.
+    function fileFacts(version as Object) as Object
+        size = 0
+        if util.isNumber(version.file_size) then size = version.file_size
+        return { rank: resolutionRank(version.resolution), hdr: util.isTrue(version.hdr), size: size }
+    end function
+
+    ' The place in files (fileFacts, in list order) of the file Auto plays
+    ' for quality, playback.preferred_quality ("auto" or a resolution,
+    ' playback.preferences; one that ranks 0 is no cap), as every Silo
+    ' client resolves it: the first file in server order (serverOrder)
+    ' among those the preference allows; else, when none fits, the lowest
+    ' rank above it (the closest), the first of those in server order;
+    ' else, when no rank is known, the first in server order. -1 for no
+    ' files. The detail page (catalog.choice) and the start (bestInEdition)
+    ' both ask here.
+    function bestOf(files as Object, quality as String) as Integer
+        cap = resolutionRank(quality)
+        fits = -1
+        above = -1
+        unknown = -1
+        for i = 0 to files.Count() - 1
+            file = files[i]
+            if file.rank = 0
+                if unknown < 0 or serverOrder(file, files[unknown]) then unknown = i
+            else if cap = 0 or file.rank <= cap
+                if fits < 0 or serverOrder(file, files[fits]) then fits = i
+            else if above < 0 or file.rank < files[above].rank or (file.rank = files[above].rank and serverOrder(file, files[above]))
+                above = i
+            end if
+        end for
+        if fits >= 0 then return fits
+        if above >= 0 then return above
+        return unknown
+    end function
+
+    ' Whether file a comes before file b in silo-server's version order
+    ' (catalog sortFileVersions): the higher rank, then HDR before SDR,
+    ' then the larger file. False on a tie, which keeps the list's order.
+    function serverOrder(a as Object, b as Object) as Boolean
+        if a.rank <> b.rank then return a.rank > b.rank
+        if a.hdr <> b.hdr then return a.hdr
+        return a.size > b.size
+    end function
+
+    ' Whether a watch version is a file a viewer chooses: not a later part
+    ' of a multipart presentation, which follows its first part.
+    function isChoosable(version as Dynamic) as Boolean
+        if not util.isObject(version) or util.text(version.file_id) = "" then return false
+        return not util.isNumber(version.presentation_part_index) or version.presentation_part_index <= 1
+    end function
+
+    ' The best file for quality (bestOf) among the projection's versions in
+    ' the edition with key edition ("" for the unnamed one), or invalid when
+    ' it lists none.
+    function bestInEdition(detail as Object, edition as String, quality = "auto" as String) as Dynamic
+        candidates = []
+        facts = []
+        for each version in detail.versions
+            if isChoosable(version) and util.text(version.edition_key) = edition
+                candidates.Push(version)
+                facts.Push(fileFacts(version))
+            end if
+        end for
+        at = bestOf(facts, quality)
+        if at < 0 then return invalid
+        return candidates[at]
+    end function
+
     ' The version last played, else the server's default variant, else the
-    ' first: what a start plays unless a detail page pinned one, and Auto on
-    ' a detail page's Version button.
+    ' first: what a start plays when nothing chose a file (Continue
+    ' Watching, a deep link, Up Next), so a resume keeps the file played.
     function chooseVersion(detail as Object) as Dynamic
         lastPlayed = ""
         if util.isObject(detail.user_data) then lastPlayed = util.text(detail.user_data.last_file_id)

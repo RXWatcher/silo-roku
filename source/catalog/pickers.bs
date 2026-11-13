@@ -2,11 +2,12 @@ import "pkg:/source/playback/tracks.bs"
 import "pkg:/source/util/i18n.bs"
 import "pkg:/source/util/values.bs"
 
-' The Version, Audio, and Subtitles menus on a detail page, and the values
+' The Edition, Version, Audio, and Subtitles menus on a detail page, and the values
 ' the readout above its action row shows (spec section 5.6), pure, worded
 ' as tvOS words them (silo-apple b90a86ea, DetailPlaybackFormatting and the
-' TrackLabels and SubtitleDisplayOrder its player shares). Version offers
-' Auto and each version; Audio offers Auto and each track in the version's
+' TrackLabels and SubtitleDisplayOrder its player shares). Edition offers
+' each edition (catalog.selection); Version offers Auto and each version of
+' the current edition; Audio offers Auto and each track in the version's
 ' order; Subtitles offers Auto, Off, and each track in tvOS's order
 ' (subtitleOrder). An option is { value, title, detail }: a version's value
 ' is its place in the selection's versions (catalog.selection), a track's is
@@ -15,8 +16,8 @@ import "pkg:/source/util/values.bs"
 ' of what the row shows, else "Track N"; its detail names the rest. copy is
 ' the strings table (i18n.load).
 namespace catalog.pickers
-    ' Auto, which the player resolves (playback.tracks.AUTO): the version
-    ' the start path chooses (playback.intent.chooseVersion); audio left to
+    ' Auto, which the player resolves (playback.tracks.AUTO): the best file
+    ' of the current edition (catalog.choice.autoFile); audio left to
     ' the start path (the version's effective_audio_track_index, else the
     ' profile's language and the device's codecs,
     ' playback.options.initialAudio); subtitles following the profile's
@@ -27,10 +28,24 @@ namespace catalog.pickers
 
     ' --- Versions -----------------------------------------------------------------
 
-    ' A version's row: "2160p · HEVC · DV · EAC3" over "Director's Cut · HEVC
-    ' · MKV · 58.31 GB".
+    ' A version's row: "2160p · HEVC · DV · EAC3" over "HEVC · MKV · 58.31
+    ' GB".
     function versionOption(value as Integer, version as Object, copy as Object) as Object
         return option(value, versionTitle(version, copy), versionDetail(version, copy))
+    end function
+
+    ' An edition's row in the Edition menu: its name ("Director's Cut", or
+    ' Standard for the unnamed one, editionName) over how many versions it
+    ' has ("2 versions"), as tvOS's edition menu shows it.
+    function editionOption(value as Integer, name as String, count as Integer, copy as Object) as Object
+        return option(value, name, i18n.pluralIn(copy, "detail.editionVersionCount", count, { count: count }))
+    end function
+
+    ' An edition's name: the edition_raw of its first file, else Standard.
+    function editionName(raw as Dynamic, copy as Object) as String
+        name = util.text(raw).Trim()
+        if name = "" then name = i18n.lookup(copy, "detail.editionStandard")
+        return name
     end function
 
     ' Resolution, video codec, dynamic range, and audio codec, or Auto when
@@ -44,12 +59,13 @@ namespace catalog.pickers
         return orAuto(joined([util.text(version.resolution), dynamicRange(version)]), copy)
     end function
 
-    ' The edition, which tvOS leaves out (spec section 5.9), then the video
-    ' codec, the container, and the file's size.
+    ' The video codec, the container, and the file's size. The edition is
+    ' the Edition button's (catalog.selection), and Version lists one
+    ' edition's files.
     function versionDetail(version as Object, copy as Object) as String
         size = ""
         if util.isNumber(version.file_size) and version.file_size > 0 then size = sizeText(version.file_size, copy)
-        return joined([util.text(version.edition_raw).Trim(), videoCodecName(util.text(version.codec_video)), UCase(util.text(version.container).Trim()), size])
+        return joined([videoCodecName(util.text(version.codec_video)), UCase(util.text(version.container).Trim()), size])
     end function
 
     ' DV when a video track carries Dolby Vision, else HDR when the version
